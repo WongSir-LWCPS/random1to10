@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <!-- 針對 iOS iPad 進行視窗鎖定，防止幼兒因雙指張開而誤放大畫面 -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>幼兒數理挑戰：數一數有幾個？</title>
+    <!-- 引入 Tailwind CSS 用於精美現代的 UI 設計 -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* 針對 iOS/iPad 優化的觸控與手勢阻斷 */
+        button, div, body {
+            -webkit-tap-highlight-color: transparent; /* 移除 iOS 預設的灰色點擊高亮 */
+            user-select: none;                         /* 防止幼兒長按文字產生選取框 */
+            -webkit-user-select: none;
+            touch-action: manipulation;                /* 消除 iOS Safari 300ms 點擊延遲，並允許滑動 */
+        }
+        
+        /* 輕微的浮動動畫，讓畫面更活潑 */
+        .float-animation {
+            animation: float 3s ease-in-out infinite;
+        }
+        @keyframes float {
+            0%, 100% { transform: translateY(0px); }
+            50% { transform: translateY(-10px); }
+        }
+        
+        /* 圖案產生的彈跳動畫 */
+        .pop-in {
+            animation: popIn 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275) both;
+        }
+        @keyframes popIn {
+            0% { transform: scale(0); opacity: 0; }
+            100% { transform: scale(1); opacity: 1; }
+        }
+    </style>
+</head>
+<!-- 使用 dvh 確保在 iOS 瀏覽器中完美貼合螢幕，並補上安全區域 padding -->
+<body class="bg-gradient-to-br from-amber-50 via-teal-50 to-sky-100 min-h-screen min-h-[100dvh] flex flex-col items-center justify-between p-6 pb-[calc(1.5rem+env(safe-area-inset-bottom))] pt-[calc(1.5rem+env(safe-area-inset-top))] font-sans overflow-hidden">
+
+    <!-- 頂部標題區 -->
+    <header class="w-full max-w-2xl text-center mt-2 flex-shrink-0">
+        <h1 class="text-4xl md:text-5xl font-extrabold text-teal-600 tracking-wider drop-shadow-sm select-none">
+            🌟 數一數，有幾個？ 🌟
+        </h1>
+        <p class="text-gray-600 text-base md:text-lg mt-2 font-medium select-none">小朋友，看著大星星數數看，然後大聲說出答案喔！</p>
+    </header>
+
+    <!-- 遊戲主要顯示區域（圖案區） -->
+    <main class="w-full max-w-3xl bg-white/90 backdrop-blur-md rounded-3xl shadow-2xl border-4 border-teal-300 p-6 md:p-8 my-4 flex-grow flex flex-col justify-center items-center relative overflow-hidden min-h-[350px]">
+        
+        <!-- 彩色紙屑畫布 (已針對 Retina 視網膜螢幕優化，不模糊) -->
+        <canvas id="confetti-canvas" class="absolute inset-0 pointer-events-none z-10"></canvas>
+
+        <!-- 圖案擺放區域：會根據數量動態調整網格與大小 -->
+        <div id="pattern-container" class="grid justify-center items-center w-full h-full min-h-[220px] max-h-[350px] p-4 gap-6 md:gap-8">
+            <!-- 圖案會動態生成在此處 -->
+        </div>
+
+        <!-- 答題狀態與回饋文字（揭曉答案時會顯示超大數字） -->
+        <div id="feedback-text" class="text-3xl md:text-4xl font-black mt-4 h-16 flex flex-col items-center justify-center text-teal-500 text-center select-none">
+            請按「🎲 隨機抽星星」開始！
+        </div>
+    </main>
+
+    <!-- 控制面板（大按鍵，高度自適應，不擠壓） -->
+    <footer class="w-full max-w-2xl flex flex-col gap-4 flex-shrink-0 mb-2">
+        
+        <!-- 兩大核心功能按鈕 -->
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 w-full">
+            
+            <!-- 按鈕一：抽取新題目 -->
+            <button id="draw-btn" class="bg-gradient-to-r from-pink-400 to-orange-400 hover:from-pink-500 hover:to-orange-500 text-white font-extrabold text-2xl md:text-3xl py-5 px-6 rounded-2xl shadow-lg transform active:scale-95 transition-all duration-150 border-b-8 border-pink-600 flex items-center justify-center gap-2">
+                <span>🎲</span> 隨機抽星星
+            </button>
+
+            <!-- 按鈕二：口頭回答後，按這個揭曉答案 -->
+            <button id="answer-btn" onclick="revealAnswer()" class="bg-gradient-to-r from-teal-400 to-emerald-400 hover:from-teal-500 hover:to-emerald-500 text-white font-extrabold text-2xl md:text-3xl py-5 px-6 rounded-2xl shadow-lg transform active:scale-95 transition-all duration-150 border-b-8 border-teal-600 flex items-center justify-center gap-2">
+                <span>👁️</span> 揭曉答案！
+            </button>
+
+        </div>
+
+        <!-- 聲音控制開關 -->
+        <div class="flex justify-end w-full">
+            <button id="mute-btn" onclick="toggleMute()" class="text-teal-700 bg-white/80 px-4 py-2 rounded-xl shadow-md border border-teal-200 text-sm font-bold active:scale-95 transition-all">
+                🔊 聲音：開啟
+            </button>
+        </div>
+    </footer>
+
+    <script>
+        // --- 遊戲狀態變數 ---
+        let currentCount = 0;      // 當前畫面上圖案的數量
+        let currentPattern = '';   // 當前抽中的圖案 Emoji
+        let isAnswerRevealed = false; // 是否已經揭曉答案
+        let isMuted = false;       // 是否靜音
+
+        // --- 圖案清單 ---
+        const patterns = [
+            { char: '⭐', name: '閃亮星星' }
+        ];
+
+        // --- DOM 元素取得 ---
+        const patternContainer = document.getElementById('pattern-container');
+        const feedbackText = document.getElementById('feedback-text');
+        const drawBtn = document.getElementById('draw-btn');
+        const answerBtn = document.getElementById('answer-btn');
+        const muteBtn = document.getElementById('mute-btn');
+        const canvas = document.getElementById('confetti-canvas');
+        const ctx = canvas.getContext('2d');
+
+        // --- Retina 高畫質 Canvas 縮放與大小自適應 ---
+        function resizeCanvas() {
+            const rect = canvas.parentElement.getBoundingClientRect();
+            const dpr = window.devicePixelRatio || 1; // 獲取 iPad 視網膜螢幕縮放比 (通常為 2 點或更高)
+            
+            canvas.width = rect.width * dpr;
+            canvas.height = rect.height * dpr;
+            
+            // 用 CSS 尺寸將 Canvas 固定在容器內
+            canvas.style.width = rect.width + 'px';
+            canvas.style.height = rect.height + 'px';
+            
+            // 縮放繪圖上下文，保持繪圖代碼不變
+            ctx.scale(dpr, dpr);
+        }
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas();
+
+        // --- 音效合成器 (Web Audio API) ---
+        let audioCtx = null;
+
+        function initAudio() {
+            if (!audioCtx) {
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            }
+        }
+
+        // 播放歡樂慶祝音效 (漸升大三和弦與琶音)
+        function playCorrectSound() {
+            if (isMuted) return;
+            initAudio();
+            const now = audioCtx.currentTime;
+            
+            // 播放一組非常輕快、喜慶的漸升音符
+            const notes = [261.63, 329.63, 392.00, 523.25, 659.25, 783.99, 1046.50]; // C4, E4, G4, C5, E5, G5, C6
+            notes.forEach((freq, index) => {
+                const osc = audioCtx.createOscillator();
+                const gain = audioCtx.createGain();
+                
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(freq, now + index * 0.08);
+                
+                gain.gain.setValueAtTime(0.15, now + index * 0.08);
+                gain.gain.exponentialRampToValueAtTime(0.01, now + index * 0.08 + 0.5);
+                
+                osc.connect(gain);
+                gain.connect(audioCtx.destination);
+                
+                osc.start(now + index * 0.08);
+                osc.stop(now + index * 0.08 + 0.5);
+            });
+        }
+
+        // 靜音切換
+        function toggleMute() {
+            isMuted = !isMuted;
+            muteBtn.textContent = isMuted ? '🔇 聲音：關閉' : '🔊 聲音：開啟';
+            initAudio(); 
+        }
+
+        // --- 核心遊戲邏輯 ---
+
+        // 1. 隨機抽取圖案與數量
+        function drawPattern() {
+            initAudio(); // 確保使用者互動時解鎖音效
+            
+            isAnswerRevealed = false;
+            stopConfetti();
+            
+            // 選擇星星
+            const randomPick = patterns[Math.floor(Math.random() * patterns.length)];
+            currentPattern = randomPick.char;
+            
+            // 隨機決定數量 (1 - 10 顆)
+            currentCount = Math.floor(Math.random() * 10) + 1;
+
+            // 清空舊圖案
+            patternContainer.innerHTML = '';
+            
+            // 【圖案大小優化，針對 iPad 寬高比適配】
+            let colClass = "grid-cols-5";
+            let sizeClass = "text-5xl md:text-6xl"; // 預設 9-10 個時的大小
+
+            if (currentCount === 1) {
+                colClass = "grid-cols-1";
+                sizeClass = "text-[160px] md:text-[220px]"; // 單個圖案在 iPad 上變得極大！
+            } else if (currentCount <= 3) {
+                colClass = `grid-cols-${currentCount}`;
+                sizeClass = "text-8xl md:text-9xl"; // 2-3 個時非常大
+            } else if (currentCount <= 6) {
+                colClass = "grid-cols-3";
+                sizeClass = "text-7xl md:text-8xl"; // 4-6 個時大
+            } else if (currentCount <= 8) {
+                colClass = "grid-cols-4";
+                sizeClass = "text-6xl md:text-7xl"; // 7-8 個時中大
+            } else {
+                colClass = "grid-cols-5";
+                sizeClass = "text-5xl md:text-6xl"; // 9-10 個時適中
+            }
+
+            patternContainer.className = `grid ${colClass} justify-center items-center w-full h-full min-h-[220px] p-4 gap-6 md:gap-8`;
+
+            // 產生圖案
+            for (let i = 0; i < currentCount; i++) {
+                const item = document.createElement('div');
+                item.className = `pop-in flex justify-center items-center ${sizeClass} select-none filter drop-shadow-md`;
+                item.style.animationDelay = `${i * 0.05}s`; // 讓圖案一個個彈出來
+                item.textContent = currentPattern;
+                patternContainer.appendChild(item);
+            }
+
+            // 更新提示字，提示小朋友口頭回答
+            feedbackText.className = "text-3xl font-bold mt-4 h-16 flex flex-col items-center justify-center text-amber-500 animate-pulse select-none";
+            feedbackText.innerHTML = `<div>有幾個星星呢？數數看，大聲說出來！</div><div class="text-lg text-gray-500 font-medium mt-1">數完後，可以按「揭曉答案」喔！</div>`;
+            
+            // 讓「揭曉答案」按鈕看起來可以點擊
+            answerBtn.style.opacity = '1';
+        }
+
+        // 2. 揭曉答案
+        function revealAnswer() {
+            if (isAnswerRevealed) return; // 避免重複觸發
+            
+            isAnswerRevealed = true;
+            playCorrectSound();
+            startConfetti();
+
+            // 在畫面下方顯示超炫的答案
+            feedbackText.className = "text-4xl md:text-5xl font-black mt-4 h-16 flex items-center justify-center text-green-500 float-animation tracking-wider select-none";
+            feedbackText.innerHTML = `🎉 答對了！有 <span class="text-red-500 mx-2 text-5xl md:text-6xl">${currentCount}</span> 個 ${currentPattern}！`;
+
+            // 讓「揭曉答案」按鈕半透明，暗示已經揭曉
+            answerBtn.style.opacity = '0.5';
+        }
+
+        // --- 慶祝彩色紙屑特效 (Canvas，已適配視網膜解析度) ---
+        let confettiParticles = [];
+        let confettiAnimationId = null;
+
+        class Confetti {
+            constructor() {
+                // 因縮放，此處繪製尺寸以邏輯像素計
+                const rect = canvas.getBoundingClientRect();
+                this.x = Math.random() * rect.width;
+                this.y = Math.random() * rect.height - rect.height;
+                this.size = Math.random() * 10 + 8; // 紙屑稍微放大，iPad上看起來效果更好
+                this.color = `hsl(${Math.random() * 360}, 95%, 60%)`;
+                this.speedY = Math.random() * 4 + 3;
+                this.speedX = Math.random() * 3 - 1.5;
+                this.rotation = Math.random() * 360;
+                this.rotationSpeed = Math.random() * 6 - 3;
+            }
+            update() {
+                const rect = canvas.getBoundingClientRect();
+                this.y += this.speedY;
+                this.x += this.speedX;
+                this.rotation += this.rotationSpeed;
+                if (this.y > rect.height) {
+                    this.y = -20;
+                    this.x = Math.random() * rect.width;
+                }
+            }
+            draw() {
+                ctx.save();
+                ctx.translate(this.x, this.y);
+                ctx.rotate((this.rotation * Math.PI) / 180);
+                ctx.fillStyle = this.color;
+                ctx.fillRect(-this.size / 2, -this.size / 2, this.size, this.size);
+                ctx.restore();
+            }
+        }
+
+        function startConfetti() {
+            stopConfetti();
+            resizeCanvas();
+            confettiParticles = [];
+            const rect = canvas.getBoundingClientRect();
+            for (let i = 0; i < 75; i++) { 
+                confettiParticles.push(new Confetti());
+            }
+            animateConfetti();
+        }
+
+        function animateConfetti() {
+            const rect = canvas.getBoundingClientRect();
+            ctx.clearRect(0, 0, rect.width, rect.height);
+            confettiParticles.forEach(p => {
+                p.update();
+                p.draw();
+            });
+            confettiAnimationId = requestAnimationFrame(animateConfetti);
+        }
+
+        function stopConfetti() {
+            if (confettiAnimationId) {
+                cancelAnimationFrame(confettiAnimationId);
+                const rect = canvas.getBoundingClientRect();
+                ctx.clearRect(0, 0, rect.width, rect.height);
+                confettiParticles = [];
+            }
+        }
+
+        // 綁定「隨機抽星星」按鈕點擊事件
+        drawBtn.addEventListener('click', drawPattern);
+
+        // 初始化：一進畫面直接幫小朋友抽好第一個題目
+        window.onload = () => {
+            drawPattern();
+        };
+    </script>
+</body>
+</html>
